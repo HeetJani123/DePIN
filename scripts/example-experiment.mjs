@@ -1,0 +1,17 @@
+import {build} from 'esbuild';
+import {writeFileSync,mkdirSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+import {resolve} from 'node:path';
+await build({entryPoints:['./lib/simulation/engine.ts'],bundle:true,platform:'node',format:'esm',outfile:'.sites-runtime/engine.mjs'});
+await build({entryPoints:['./lib/simulation/types.ts'],bundle:true,platform:'node',format:'esm',outfile:'.sites-runtime/types.mjs'});
+const {simulate,statistics}=await import(pathToFileURL(resolve('.sites-runtime/engine.mjs')).href);
+const {defaults}=await import(pathToFileURL(resolve('.sites-runtime/types.mjs')).href);
+mkdirSync('examples/research',{recursive:true});
+writeFileSync('examples/research/default-config.json',JSON.stringify(defaults,null,2));
+const trials=Array.from({length:10},(_,i)=>simulate({...defaults,seed:42+i}));
+const keys=Object.keys(trials[0].results[0].metrics),q=v=>'"'+String(v??'').replaceAll('"','""')+'"';
+const rows=[['model','seed','mechanism',...keys,'configuration'],...trials.flatMap(t=>t.results.map(r=>['1.0',t.seed,r.mechanism,...keys.map(k=>r.metrics[k]),JSON.stringify(t.config)]))];
+writeFileSync('examples/research/default-results.csv',rows.map(r=>r.map(q).join(',')).join('\r\n'));
+const effect=statistics(trials.map(t=>t.results[3].metrics.leakage-t.results[0].metrics.leakage));
+const start=performance.now();const large=simulate({...defaults,providers:1000});const elapsed=performance.now()-start;
+console.log(JSON.stringify({trials:trials.length,pairedLeakageDifference:effect,largeNetwork:{providers:large.network.providers.length,users:large.network.users.length,elapsedMs:Math.round(elapsed),finite:large.results.every(r=>Object.values(r.metrics).every(v=>v===null||Number.isFinite(v)))}}));

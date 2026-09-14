@@ -1,0 +1,7 @@
+import {random,clamp} from './random';
+import {allocate} from './network';
+import type {Config,NetworkState} from './types';
+export function applyTopologyAttack(net:NetworkState,c:Config){const r=random(c.seed^0x32481),original=[...net.providers];if(c.attack==='sybil'){for(const p of original.filter(p=>p.malicious)){p.attackCost=c.attackCost;for(let j=0;j<c.sybils;j++)net.providers.push({...p,id:net.providers.length,actor:p.id,sybil:true,capacity:0,cost:c.sybilCost,stake:c.stake,attackCost:c.sybilCost,active:false});}}
+if(c.attack==='strategic placement'){for(const p of net.providers.filter(p=>p.malicious)){let best=-Infinity,bx=p.x,by=p.y;for(let j=0;j<8;j++){p.x=r()*20;p.y=r()*20;const a=allocate(net.providers,net.users,c);const score=c.placement==='utility'?a.health.utility:a.actual[p.id];if(score>best){best=score;bx=p.x;by=p.y}}p.x=bx;p.y=by;p.attackCost=c.attackCost}}}
+export function applyClaims(net:NetworkState,c:Config){const r=random(c.seed^0x98323);for(const p of net.providers){p.claimed=p.actual;if(p.malicious){if(c.attack==='false contribution'||c.attack==='collusion')p.claimed=p.actual*c.inflation;if(c.attack==='fake demand')p.claimed+=c.fakeDemand;if(c.attack==='sybil'&&p.sybil)p.claimed=(net.providers.find(actor=>actor.id===p.actor)?.actual??0)*c.inflation;if(c.attack!=='none'&&c.attack!=='sybil')p.attackCost=c.attackCost}p.fraud=p.claimed>p.actual+1e-9;const discrepancy=(p.claimed-p.actual)/Math.max(1,p.claimed);p.risk=clamp(.08+discrepancy*.55+(1-p.reputation)*.25+(r()-.5)*.35,.01,.99)}}
+
