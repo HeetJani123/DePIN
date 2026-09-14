@@ -1,29 +1,120 @@
 "use client";
-import {useState,useRef,useEffect} from 'react';
-import {RadioTower,LayoutDashboard,Network,Scale,ShieldAlert,ShieldCheck,FlaskConical,ChartNoAxesCombined,FileChartColumn,Play,ArrowUpRight,Download,ChevronRight,BookOpen,Check,Info,X,LoaderCircle} from 'lucide-react';
-import {SidebarProvider,Sidebar,SidebarHeader,SidebarContent,SidebarMenu,SidebarMenuItem,SidebarMenuButton,SidebarFooter,SidebarTrigger} from '@/components/ui/sidebar';
-import {Slider} from '@/components/ui/slider';
-import {Progress} from '@/components/ui/progress';
-import {Choice,Metric} from '@/components/lab/controls';
-import {NetworkMap,modes} from '@/components/lab/network-map';
-import {ComparisonChart,ProviderTable} from '@/components/lab/charts';
-import {Settings} from '@/components/lab/settings';
-import {Guide,ProviderDetails} from '@/components/lab/details';
-import {ResearchViews} from '@/components/lab/research-views';
-import {defaults,mechanisms,type Config,type Trial,type Provider,type Mechanism} from '@/lib/simulation/types';
-import {simulate} from '@/lib/simulation/engine';
-import {metricDefinitions,formatMetric as fmt} from '@/lib/simulation/metrics';
-const nav=[{name:'Overview',icon:LayoutDashboard},{name:'Network',icon:Network},{name:'Economics',icon:Scale},{name:'Attacks',icon:ShieldAlert},{name:'Verification',icon:ShieldCheck},{name:'Experiment Lab',icon:FlaskConical},{name:'Mechanism Comparison',icon:ChartNoAxesCombined},{name:'Research Results',icon:FileChartColumn}];
-export default function Home(){const [page,setPage]=useState('Overview'),[config,setConfig]=useState<Config>(defaults),[trial,setTrial]=useState<Trial>(()=>simulate({...defaults,trials:1})),[trials,setTrials]=useState<Trial[]>([]),[mechanism,setMechanism]=useState<Mechanism>('Proposed'),[mode,setMode]=useState('Coverage'),[provider,setProvider]=useState<Provider|null>(null),[busy,setBusy]=useState(false),[progress,setProgress]=useState(0),[notice,setNotice]=useState(''),[demo,setDemo]=useState(false),[removed,setRemoved]=useState<number>(),[baseline,setBaseline]=useState<Trial|null>(null);const worker=useRef<Worker|null>(null);const result=trial.results.find(r=>r.mechanism===mechanism)!,metrics=result.metrics;const sample=trials.length?trials:[trial],dirty=JSON.stringify({...config,trials:1})!==JSON.stringify({...sample[0].config,trials:1});const patch=<K extends keyof Config>(key:K,value:Config[K])=>setConfig(c=>({...c,[key]:value}));
-useEffect(()=>()=>worker.current?.terminate(),[]);useEffect(()=>{if(!notice)return;const id=setTimeout(()=>setNotice(''),6000);return()=>clearTimeout(id)},[notice]);
-function run(multiple=false,remove?:number){worker.current?.terminate();setBusy(true);setProgress(0);setProvider(null);const c={...(remove===undefined?config:trial.config),trials:multiple?config.trials:1};let gathered:Trial[]=[];const w=new Worker('/simulation-worker.js',{type:'module'});worker.current=w;w.onmessage=e=>{if(e.data.type==='trial'){gathered.push(e.data.trial);setTrial(e.data.trial);setRemoved(remove);if(remove===undefined)setBaseline(null);setProgress(gathered.length/c.trials*100);setTrials([...gathered])}if(e.data.type==='done'){setBusy(false);w.terminate();setNotice(`${gathered.length} reproducible trial${gathered.length===1?'':'s'} completed.`)}if(e.data.type==='error'){setBusy(false);setNotice(e.data.message);w.terminate()}};w.onerror=e=>{setBusy(false);setNotice(`Simulation failed: ${e.message}`);w.terminate()};w.postMessage({config:c,removedId:remove})}
-function exportCSV(){const quote=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;const keys=Object.keys(metricDefinitions);const rows=[['model','seed','mechanism','removed_provider',...keys,'configuration'],...sample.flatMap(t=>t.results.map(r=>['1.0',t.seed,r.mechanism,removed??'',...keys.map(k=>r.metrics[k]),JSON.stringify(t.config)]))];const blob=new Blob([rows.map(r=>r.map(quote).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8;'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`depin-experiment-${sample[0].seed}.csv`;a.click();URL.revokeObjectURL(a.href);setNotice('Raw results and complete configurations exported.')}
-async function copyConfig(){try{await navigator.clipboard.writeText(JSON.stringify({modelVersion:'1.0',config:sample[0].config,mechanism,removedProvider:removed??null,completedTrials:sample.length},null,2));setNotice('Completed experiment configuration copied.')}catch{setNotice('Clipboard unavailable. Export Results contains the full configuration.')}}
-useEffect(()=>{const ctx=(document as Document&{modelContext?:{registerTool:(t:unknown,o:unknown)=>unknown}}).modelContext;if(!ctx)return;const abort=new AbortController();try{Promise.resolve(ctx.registerTool({name:'read_depin_experiment',description:'Read the completed simulation configuration and mechanism metrics.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:(input:unknown)=>{if(!input||typeof input!=='object'||Object.keys(input).length)throw Error('Expected an empty object');return{config:trial.config,mechanism,metrics,removedProvider:removed??null}}},{signal:abort.signal})).catch(()=>{})}catch{}return()=>abort.abort()},[trial,mechanism,metrics,removed]);
-const reduction=trial.results[0].metrics.leakage!>0?(1-trial.results[3].metrics.leakage!/trial.results[0].metrics.leakage!)*100:null;
-const mapPanel=<section className="panel map-panel"><div className="panel-heading"><div><h2>Wireless network topology</h2><p>{trial.network.providers.length} providers <b>·</b> {trial.network.users.length.toLocaleString()} users <b>·</b> seed {trial.seed}</p></div><Choice label="Visualization" value={mode} options={modes} onChange={setMode}/></div><NetworkMap trial={trial} mechanism={mechanism} mode={mode} onSelect={setProvider} removed={removed}/><div className="map-legend"><span><i style={{background:'#6fdec0'}}/>Honest provider</span><span><i style={{background:'#f0a283'}}/>Malicious</span><span><i style={{background:'#c4a1ee'}}/>Sybil</span><span><i className="ring"/>Verified</span><span className="legend-help">Select a node to inspect <ArrowUpRight size={13}/></span></div></section>;
-return <SidebarProvider style={{'--sidebar-width':'225px'} as React.CSSProperties}><Sidebar><SidebarHeader className="brand"><div className="brand-symbol"><RadioTower size={26}/></div><div>DePIN<span>RESEARCH LAB</span></div></SidebarHeader><SidebarContent><div className="nav-label">RESEARCH WORKSPACE</div><SidebarMenu className="nav-menu">{nav.map((n,i)=><SidebarMenuItem key={n.name}><SidebarMenuButton isActive={page===n.name} onClick={()=>setPage(n.name)} tooltip={n.name} className="nav-button"><n.icon size={18}/><span>{n.name}</span>{i===5&&<span className="lab-tag">LAB</span>}</SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu><div className="sidebar-study"><span className="eyebrow">THE RESEARCH QUESTION</span><p>How do we reward infrastructure that truly matters?</p><button onClick={()=>setDemo(true)}>Explore the model <ArrowUpRight size={14}/></button></div></SidebarContent><SidebarFooter><button className="guide-button" onClick={()=>setDemo(true)}><BookOpen size={16}/>Research guide<ChevronRight size={14}/></button><div className="sidebar-foot"><span className="live-dot"/>Client-side simulation<span>v1.0</span></div></SidebarFooter></Sidebar><main className="workspace"><header className="topbar"><div><SidebarTrigger/><span>Research workspace</span><ChevronRight size={13}/><strong>{page}</strong></div><span className="model-tag">EXPERIMENTAL MODEL <span>v1.0</span></span></header><div className="workspace-body"><div className="page-heading"><div><div className="eyebrow">VERIFICATION-AWARE MARGINAL-UTILITY INCENTIVES</div><h1>{page==='Overview'?'Paying for what matters.':page}</h1><p>{page==='Overview'?'Investigating the economics of useful, verifiable wireless infrastructure.':page==='Experiment Lab'?'Reproducible trials. Shared environments. Measurable trade-offs.':page==='Mechanism Comparison'?'Four reward rules, evaluated against identical physical environments.':'Explore the assumptions and evidence behind the current experiment.'}</p></div><div className="heading-actions"><button className="button secondary" onClick={exportCSV}><Download size={15}/>Export results</button><button className="button primary" disabled={busy} onClick={()=>run(page==='Experiment Lab')}>{busy?<LoaderCircle className="spin" size={15}/>:<Play size={15} fill="currentColor"/>}{busy?'Running…':'Run experiment'}</button></div></div><div className="experiment-strip"><span className="live-dot"/><strong>{removed===undefined?'Current experiment':'Removal experiment'}</strong><span>Seed <b>{trial.seed}</b></span><span>{trial.config.providers} base providers</span><span>{trial.config.malicious}% malicious</span><span>{trial.config.budget}% audit budget</span><span className="strip-attack">{trial.config.attack}</span><span className="strip-status">{busy?`${Math.round(progress)}% complete`:dirty?'Parameters edited':'Reproducible'}</span></div>{busy&&<div className="run-progress"><Progress value={progress}/><button onClick={()=>{worker.current?.terminate();setBusy(false);setNotice('Stopped. Completed trials are retained.')}}>Cancel run</button></div>}
-{(page==='Overview'||page==='Network')&&<><div className="metrics-grid"><Metric name="utility" value={metrics.utility} note="Weighted physical network performance"/><Metric name="coverage" value={metrics.coverage} note={`${trial.network.users.filter(u=>u.assigned!==null).length} users assigned service`}/><Metric name="leakage" value={metrics.leakage} note={`${mechanism} · fabricated claim payments`}/><Metric name="detection" value={metrics.detection} note={`${result.detected.length} detected / ${trial.network.providers.filter(p=>p.fraud).length} fraudulent claims`}/></div><div className="overview-grid"><div>{mapPanel}</div><section className="panel configuration"><div className="panel-heading"><h2>Experiment parameters</h2><FlaskConical size={17}/></div><Choice label="Reward mechanism" value={mechanism} options={mechanisms} onChange={v=>setMechanism(v as Mechanism)}/>{mechanism==='Proposed'&&<div className="experimental-note">Experimental proposed mechanism</div>}<Choice label="Attack scenario" value={config.attack} options={['none','false contribution','sybil','strategic placement','fake demand','collusion']} onChange={v=>patch('attack',v as Config['attack'])}/><div className="range-field"><label>Malicious providers <b>{config.malicious}%</b></label><Slider aria-label="Malicious provider percentage" value={[config.malicious]} min={0} max={50} step={5} onValueChange={v=>patch('malicious',v[0])}/><div><span>0%</span><span>50%</span></div></div><Choice label="Verification budget (%)" value={String(config.budget)} options={['1','5','10','25','50','100']} onChange={v=>patch('budget',+v)}/><Choice label="Allocation strategy" value={config.strategy} options={['risk','random']} onChange={v=>patch('strategy',v as Config['strategy'])}/><button className="text-button" onClick={()=>setPage('Experiment Lab')}>All experiment settings <ArrowUpRight size={15}/></button><div className="config-footer"><ShieldCheck size={16}/><span>Seeded simulation<br/><small>Same inputs. Same results.</small></span></div></section></div>{baseline&&removed!==undefined&&<section className="insight"><Info/><div><h3>Provider removal result</h3><p>Utility changed from {baseline.network.health.utility.toFixed(5)} to {trial.network.health.utility.toFixed(5)}. Demand served changed by {((trial.network.health.demand-baseline.network.health.demand)*100).toFixed(2)} percentage points.</p><button className="text-button" onClick={()=>run()}>Restore full network</button></div></section>}{page==='Network'&&<section className="panel"><div className="panel-heading"><h2>Physical network settings</h2></div><Settings config={config} setConfig={setConfig} group="network"/><ProviderTable trial={trial} result={result} onSelect={setProvider}/></section>}{page==='Overview'&&<><div className="bottom-grid"><section className="panel"><div className="panel-heading"><div><h2>Where do rewards go?</h2><p>Fraudulent reward leakage · credits</p></div><button className="icon-button" aria-label="Open mechanism comparison" onClick={()=>setPage('Mechanism Comparison')}><ArrowUpRight size={17}/></button></div><ComparisonChart trials={[trial]}/></section><section className="panel security-panel"><div className="panel-heading"><h2>Verification & economics</h2><ShieldCheck size={17}/></div>{['demand','totalRewards','usefulEfficiency','participation','attackROI','verificationCost','verificationEfficiency'].map(k=><div className="stat-row" key={k} title={metricDefinitions[k].definition}><span>{metricDefinitions[k].label}</span><strong>{fmt(k,metrics[k])}{metricDefinitions[k].unit==='cr'?' cr':''}</strong></div>)}</section></div><section className="insight"><FlaskConical size={22}/><div><h3>Research insight <span>COMPUTED RESULT · SEED {trial.seed}</span></h3><p>{reduction===null?'No fraudulent reward leakage occurred under contribution-based rewards. A relative reduction cannot be calculated.':`With ${trial.config.malicious}% malicious base providers and a ${trial.config.budget}% audit cap, the proposed rule ${reduction>=0?'reduced':'increased'} fraudulent reward leakage by ${Math.abs(reduction).toFixed(1)}% relative to contribution-based rewards.`} This is one simulated observation, not evidence of optimality.</p></div><button className="text-button" onClick={()=>setPage('Research Results')}>Inspect evidence <ArrowUpRight size={14}/></button></section></>}</>}
-<ResearchViews page={page} config={config} setConfig={setConfig} trial={trial} sample={sample} result={result} busy={busy} run={()=>run(true)} setPage={setPage} copyConfig={copyConfig} onSelect={setProvider} removed={removed}/><footer className="workspace-footer"><span>DePIN Incentive Research <b> / </b> University research simulation</span><span>Assumptions ≠ evidence <b>·</b> No optimality claims</span></footer></div></main><ProviderDetails provider={provider} trial={trial} result={result} busy={busy||removed!==undefined} onClose={()=>setProvider(null)} onRemove={id=>{setBaseline(trial);run(false,id)}}/><Guide open={demo} onChange={setDemo} onLab={()=>setPage('Experiment Lab')}/>{notice&&<div className="notice" role="status"><Check size={16}/>{notice}<button aria-label="Dismiss notification" onClick={()=>setNotice('')}><X size={14}/></button></div>}</SidebarProvider>}
 
+import {useEffect,useRef,useState} from "react";
+import {BarChart3,Check,Download,FlaskConical,LoaderCircle,Play,RadioTower,X} from "lucide-react";
+import {Progress} from "@/components/ui/progress";
+import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from "@/components/ui/table";
+import {Choice,NumberField} from "@/components/lab/controls";
+import {NetworkMap,modes} from "@/components/lab/network-map";
+import {ComparisonChart,colors,mechanismLabel} from "@/components/lab/charts";
+import {ProviderDetails} from "@/components/lab/details";
+import {Settings} from "@/components/lab/settings";
+import {simulate,statistics} from "@/lib/simulation/engine";
+import {formatMetric as fmt,metricDefinitions} from "@/lib/simulation/metrics";
+import {defaults,mechanisms,type Config,type Mechanism,type Provider,type Trial} from "@/lib/simulation/types";
 
+type View="Simulation"|"Experiment"|"Results";
+const resultMetrics=["utility","leakage","detection","verificationEfficiency","attackROI"];
+const attacks:Config["attack"][]=["none","false contribution","sybil","strategic placement","fake demand","collusion"];
+
+export default function Home(){
+  const [view,setView]=useState<View>("Experiment");
+  const [config,setConfig]=useState<Config>(defaults);
+  const [trial,setTrial]=useState<Trial>(()=>simulate({...defaults,trials:1}));
+  const [trials,setTrials]=useState<Trial[]>([]);
+  const [mechanism,setMechanism]=useState<Mechanism>("Proposed");
+  const [mode,setMode]=useState("Coverage");
+  const [provider,setProvider]=useState<Provider|null>(null);
+  const [busy,setBusy]=useState(false);
+  const [progress,setProgress]=useState(0);
+  const [notice,setNotice]=useState("");
+  const worker=useRef<Worker|null>(null);
+  const result=trial.results.find(r=>r.mechanism===mechanism)!;
+  const sample=trials.length?trials:[trial];
+  const dirty=JSON.stringify({...config,trials:1})!==JSON.stringify({...sample[0].config,trials:1});
+  const patch=<K extends keyof Config>(key:K,value:Config[K])=>setConfig(c=>({...c,[key]:value}));
+
+  useEffect(()=>()=>worker.current?.terminate(),[]);
+  useEffect(()=>{if(!notice)return;const id=setTimeout(()=>setNotice(""),6000);return()=>clearTimeout(id)},[notice]);
+
+  function run(count=config.trials){
+    worker.current?.terminate();setBusy(true);setProgress(0);setProvider(null);
+    const c={...config,trials:count};let gathered:Trial[]=[];
+    const w=new Worker("/simulation-worker.js",{type:"module"});worker.current=w;
+    w.onmessage=e=>{
+      if(e.data.type==="trial"){
+        gathered.push(e.data.trial);setTrial(e.data.trial);setProgress(gathered.length/count*100);setTrials([...gathered]);
+      }
+      if(e.data.type==="done"){
+        setBusy(false);w.terminate();setView("Results");setNotice(`${gathered.length} paired seeded trial${gathered.length===1?"":"s"} completed.`);
+      }
+      if(e.data.type==="error"){setBusy(false);setNotice(e.data.message);w.terminate()}
+    };
+    w.onerror=e=>{setBusy(false);setNotice(`Simulation failed: ${e.message}`);w.terminate()};
+    w.postMessage({config:c});
+  }
+
+  function exportCSV(){
+    const quote=(v:unknown)=>`"${String(v??"").replaceAll('"','""')}"`;
+    const rows=[["model","seed","mechanism",...resultMetrics,"configuration"],...sample.flatMap(t=>t.results.map(r=>["1.0",t.seed,r.mechanism,...resultMetrics.map(k=>r.metrics[k]),JSON.stringify(t.config)]))];
+    const blob=new Blob([rows.map(r=>r.map(quote).join(",")).join("\r\n")],{type:"text/csv;charset=utf-8;"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`depin-results-${sample[0].seed}-${sample.length}trials.csv`;a.click();URL.revokeObjectURL(a.href);
+    setNotice("Raw per-seed mechanism results exported.");
+  }
+
+  useEffect(()=>{
+    const ctx=(document as Document&{modelContext?:{registerTool:(t:unknown,o:unknown)=>unknown}}).modelContext;if(!ctx)return;
+    const abort=new AbortController();
+    try{Promise.resolve(ctx.registerTool({name:"read_depin_experiment",description:"Read the completed simulation configuration and mechanism metrics.",inputSchema:{type:"object",properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:(input:unknown)=>{if(!input||typeof input!=="object"||Object.keys(input).length)throw Error("Expected an empty object");return{config:sample[0].config,trials:sample.map(t=>({seed:t.seed,results:t.results.map(r=>({mechanism:r.mechanism,metrics:r.metrics}))}))}}},{signal:abort.signal})).catch(()=>{})}catch{}
+    return()=>abort.abort();
+  },[sample]);
+
+  const malicious=trial.network.providers.filter(p=>p.malicious&&!p.sybil).length;
+  const leakageDelta=statistics(sample.map(t=>(t.results[3].metrics.leakage??0)-(t.results[0].metrics.leakage??0)));
+  const detectionDelta=statistics(sample.map(t=>(t.results[3].metrics.detection??0)-(t.results[0].metrics.detection??0)));
+
+  return <main className="research-app">
+    <header className="research-header">
+      <div className="research-brand"><span><RadioTower size={18}/></span><div><strong>DePIN Research Lab</strong><small>VERIFICATION-AWARE INCENTIVE EXPERIMENT</small></div></div>
+      <nav aria-label="Primary views">{(["Simulation","Experiment","Results"] as View[]).map((name,i)=><button key={name} data-active={view===name} onClick={()=>setView(name)}><b>0{i+1}</b>{name}</button>)}</nav>
+      <div className="research-actions"><span className={dirty?"edited":"ready"}>{busy?`${Math.round(progress)}%`:dirty?"parameters edited":`${sample.length} trial${sample.length===1?"":"s"}`}</span><button className="compact-export" onClick={exportCSV}><Download size={14}/>CSV</button></div>
+    </header>
+
+    {busy&&<div className="research-progress"><Progress value={progress}/><button onClick={()=>{worker.current?.terminate();setBusy(false);setNotice("Run stopped; completed trials retained.")}}>Stop</button></div>}
+
+    <div className="research-main">
+      {view==="Simulation"&&<SimulationView trial={trial} resultMechanism={mechanism} mode={mode} setMode={setMode} onProvider={setProvider} malicious={malicious}/>} 
+      {view==="Experiment"&&<ExperimentView config={config} setConfig={setConfig} mechanism={mechanism} setMechanism={setMechanism} busy={busy} run={run} patch={patch}/>} 
+      {view==="Results"&&<ResultsView sample={sample} dirty={dirty} busy={busy} run={()=>run()} exportCSV={exportCSV} leakageDelta={leakageDelta} detectionDelta={detectionDelta}/>} 
+    </div>
+
+    <ProviderDetails provider={provider} trial={trial} result={result} onClose={()=>setProvider(null)}/>
+    {notice&&<div className="notice" role="status"><Check size={16}/>{notice}<button aria-label="Dismiss notification" onClick={()=>setNotice("")}><X size={14}/></button></div>}
+  </main>;
+}
+
+function SimulationView({trial,resultMechanism,mode,setMode,onProvider,malicious}:{trial:Trial;resultMechanism:Mechanism;mode:string;setMode:(v:string)=>void;onProvider:(p:Provider)=>void;malicious:number}){
+  return <><div className="view-intro"><div><span className="view-kicker">01 / SIMULATION</span><h1>Network state</h1><p>Inspect the physical environment used by the current experiment.</p></div><Choice label="Map layer" value={mode} options={modes} onChange={setMode}/></div>
+    <div className="network-summary"><div><span>Providers</span><strong>{trial.network.providers.length}</strong></div><div><span>Users</span><strong>{trial.network.users.length.toLocaleString()}</strong></div><div><span>Coverage</span><strong>{fmt("coverage",trial.network.health.coverage)}</strong></div><div><span>Malicious</span><strong>{malicious}</strong></div></div>
+    <section className="research-panel map-research-panel"><div className="research-panel-head"><div><h2>20 × 20 network field</h2><p>Seed {trial.seed} · click any provider to inspect contribution, risk, reward, and verification.</p></div><span className="sample-tag">{mechanismLabel(resultMechanism)}</span></div><NetworkMap trial={trial} mechanism={resultMechanism} mode={mode} onSelect={onProvider}/><div className="map-legend"><span><i style={{background:"#6fdec0"}}/>Honest provider</span><span><i style={{background:"#f0a283"}}/>Malicious</span><span><i style={{background:"#c4a1ee"}}/>Sybil</span><span><i className="ring"/>Verified</span></div></section>
+  </>;
+}
+
+function ExperimentView({config,setConfig,mechanism,setMechanism,busy,run,patch}:{config:Config;setConfig:(c:Config)=>void;mechanism:Mechanism;setMechanism:(m:Mechanism)=>void;busy:boolean;run:(count?:number)=>void;patch:<K extends keyof Config>(key:K,value:Config[K])=>void}){
+  return <><div className="view-intro"><div><span className="view-kicker">02 / EXPERIMENT</span><h1>Configure one reproducible test</h1><p>Set parameters, run paired mechanisms, and move directly to quantitative results.</p></div></div>
+    <section className="research-panel experiment-panel"><div className="experiment-form">
+      <Choice label="Providers" value={String(config.providers)} options={["50","100","250","500","1000"]} onChange={v=>patch("providers",+v)}/><NumberField label="Users" value={config.users} onChange={v=>patch("users",v)} min={1} max={5000}/><Choice label="Malicious provider %" value={String(config.malicious)} options={["0","5","10","20","30","40","50"]} onChange={v=>patch("malicious",+v)}/><Choice label="Attack type" value={config.attack} options={attacks} onChange={v=>patch("attack",v as Config["attack"])}/><Choice label="Verification budget %" value={String(config.budget)} options={["1","5","10","25","50","100"]} onChange={v=>patch("budget",+v)}/><Choice label="Reward mechanism for map" value={mechanism} options={mechanisms} onChange={v=>setMechanism(v as Mechanism)}/><Choice label="Number of trials" value={String(config.trials)} options={["1","10","25","50","100"]} onChange={v=>patch("trials",+v)}/><NumberField label="Random seed" value={config.seed} onChange={v=>patch("seed",v)} min={0} max={4294967295}/>
+    </div><div className="experiment-runbar"><div><FlaskConical size={18}/><span><strong>Paired design</strong><small>Every seed evaluates all four reward mechanisms against the same network.</small></span></div><button className="run-100" disabled={busy} onClick={()=>run(100)}>Run 100 trials</button><button className="run-primary" disabled={busy} onClick={()=>run()}>{busy?<LoaderCircle className="spin" size={16}/>:<Play size={16} fill="currentColor"/>}Run experiment</button></div></section>
+    <details className="advanced-panel"><summary>Advanced model assumptions</summary><div className="advanced-grid"><div><h3>Network</h3><Settings config={config} setConfig={setConfig} group="network"/></div><div><h3>Attack</h3><Settings config={config} setConfig={setConfig} group="attack"/></div><div><h3>Verification</h3><Settings config={config} setConfig={setConfig} group="verification"/></div><div><h3>Economics</h3><Settings config={config} setConfig={setConfig} group="economics"/></div></div></details>
+  </>;
+}
+
+function ResultsView({sample,dirty,busy,run,exportCSV,leakageDelta,detectionDelta}:{sample:Trial[];dirty:boolean;busy:boolean;run:()=>void;exportCSV:()=>void;leakageDelta:ReturnType<typeof statistics>;detectionDelta:ReturnType<typeof statistics>}){
+  return <><div className="view-intro results-intro"><div><span className="view-kicker">03 / RESULTS</span><h1>Mechanism comparison</h1><p>{sample.length} paired seeded trial{sample.length===1?"":"s"} · seeds {sample[0].seed}{sample.length>1?`–${sample[sample.length-1].seed}`:""}</p></div><div><button className="compact-export large" onClick={exportCSV}><Download size={15}/>Export CSV</button><button className="rerun" disabled={busy} onClick={run}><Play size={14}/>Re-run</button></div></div>
+    {dirty&&<div className="stale-banner">Results show the last completed configuration. Run the experiment to apply edited parameters.</div>}
+    <section className="research-panel evidence-table"><div className="research-panel-head"><div><h2>Quantitative evidence</h2><p>{sample.length>1?"Mean with sample SD and 95% Student-t confidence interval":"Single seeded observation; run multiple trials for uncertainty estimates"}</p></div><span className="sample-tag">n = {sample.length}</span></div><Table><TableHeader><TableRow><TableHead>Metric</TableHead>{mechanisms.map((m,i)=><TableHead key={m} style={{color:colors[i]}}>{mechanismLabel(m)}</TableHead>)}</TableRow></TableHeader><TableBody>{resultMetrics.map(k=><TableRow key={k}><TableCell title={metricDefinitions[k].definition}>{metricDefinitions[k].label}</TableCell>{mechanisms.map((m,i)=>{const s=statistics(sample.map(t=>t.results[i].metrics[k]));return <TableCell key={m}><strong>{fmt(k,s.mean)}</strong>{sample.length>1&&<><small>SD {fmt(k,s.sd)}</small><small>95% CI {s.low===null?"N/A":`${fmt(k,s.low)}–${fmt(k,s.high)}`}</small></>}</TableCell>})}</TableRow>)}</TableBody></Table></section>
+    <div className="mobile-evidence">{mechanisms.map((m,i)=><section className="research-panel" key={m}><h2 style={{color:colors[i]}}>{mechanismLabel(m)}</h2>{resultMetrics.map(k=>{const s=statistics(sample.map(t=>t.results[i].metrics[k]));return <div className="mobile-result" key={k}><span>{metricDefinitions[k].label}</span><strong>{fmt(k,s.mean)}</strong>{sample.length>1&&<small>SD {fmt(k,s.sd)} · 95% CI {s.low===null?"N/A":`${fmt(k,s.low)} to ${fmt(k,s.high)}`}</small>}</div>})}</section>)}</div>
+    <div className="results-charts">{[["leakage","Fraudulent reward leakage"],["detection","Fraud detection rate"],["verificationEfficiency","Verification efficiency"]].map(([metric,title])=><section className="research-panel chart-card" key={metric}><div className="research-panel-head"><div><h2>{title}</h2><p>Mean across paired seeds</p></div></div><ComparisonChart trials={sample} metric={metric}/></section>)}</div>
+    <section className="statistical-summary"><div><BarChart3 size={20}/><span><strong>Statistical summary</strong><small>Proposed mechanism minus contribution-based</small></span></div><p>Fraudulent leakage difference: <b>{fmt("leakage",leakageDelta.mean)}</b>{sample.length>1&&<> (SD {fmt("leakage",leakageDelta.sd)}; 95% CI {leakageDelta.low===null?"N/A":`${fmt("leakage",leakageDelta.low)} to ${fmt("leakage",leakageDelta.high)}`})</>}.</p><p>Detection-rate difference: <b>{fmt("detection",detectionDelta.mean)}</b>{sample.length>1&&<> (SD {fmt("detection",detectionDelta.sd)}; 95% CI {detectionDelta.low===null?"N/A":`${fmt("detection",detectionDelta.low)} to ${fmt("detection",detectionDelta.high)}`})</>}.</p><small>Intervals describe Monte Carlo uncertainty under this model. They do not establish real-world validity or optimality.</small></section>
+  </>;
+}
