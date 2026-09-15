@@ -40,11 +40,12 @@ components/lab/
 lib/simulation/
   types.ts                 Parameters and serializable domain types
   random.ts                Seeded Mulberry32 PRNG
-  network.ts               Generation, service allocation, exact marginal utility
+  network.ts               Generation, service allocation, fast and exact marginal utility
+  behavior.ts              Participation, effort, placement, attack, and state updates
   attacks.ts               Topology manipulation and fabricated claims
   verification.ts          Limited random/risk-based audits and noisy detection
   rewards.ts               Four normalized reward rules and economic metrics
-  engine.ts                Trial orchestration and sample statistics
+  engine.ts                Repeated-round orchestration and sample statistics
   worker.ts                Background batch execution
   metrics.ts               UI metric dictionary and formatting
 scripts/
@@ -59,13 +60,13 @@ public/
 
 ## Simulation architecture
 
-A trial passes through `generate → applyTopologyAttack → evaluate → applyClaims → reward` for each of four mechanisms. All mechanisms share physical state, claims, risk scores, and audit random draws. Experiments use seeds `startingSeed + trialIndex` modulo 2³². No `Math.random`, clock-derived metrics, or fabricated chart series are used.
+A paired trial starts each mechanism from the same seeded provider and user draw. Every mechanism then evolves its own network through repeated rounds: participation and behavior decisions → demand → service allocation → claims → verification → rewards and penalties → provider economic-state updates. Because past rewards change expected rewards, participation, effort, placement, attacks, reputation, and stake, the four mechanisms can produce different physical utility trajectories. Experiments use seeds `startingSeed + trialIndex` modulo 2³². No `Math.random`, clock-derived metrics, or fabricated chart series are used.
 
-The city is a continuous 20 × 20 coordinate domain displayed as 400 grid cells. Uniform, clustered and underserved demand distributions are supported. Sparse, medium and dense deployment use provider-location spans of 20, 18 and 11 grid units, centered on the city. Reliability samples one online/offline state per provider per trial. Quality varies ±15% around the configured level, clipped to [0,1]. Users demand uniform [0.5,1.5) units.
+The city is a continuous 20 × 20 coordinate domain displayed as 400 grid cells. Uniform, clustered and underserved demand distributions are supported. Sparse, medium and dense deployment use provider-location spans of 20, 18 and 11 grid units, centered on the city. Reliability samples online/offline state in every round, conditional on participation and effort. Quality varies ±15% around the configured level, clipped to [0,1]. Users demand uniform [0.5,1.5) units.
 
-Users are processed in ID order. Each chooses the highest-quality reachable online provider with remaining capacity, ties by provider index. A user receives up to remaining capacity from one provider; unserved residual is not split. Link quality is `providerQuality × (1 − 0.35 × distance / radius)`. User-order bias, no interference, no mobility, and no equilibrium are explicit assumptions.
+Users are processed in ID order. Each chooses the highest-quality reachable online provider with remaining capacity, ties by provider index. A user receives up to remaining capacity from one provider; unserved residual is not split. Link quality is `providerQuality × (1 − 0.35 × distance / radius)`. User-order bias, no interference, and no within-round mobility are explicit assumptions. The adaptive process is a bounded behavioral simulation rather than a solved game-theoretic equilibrium.
 
-Exact marginal utility removes each provider and reallocates all demand with the same outages and user order. Cached candidate lists reduce distance work; offline removal is analytically equivalent to removing its operating cost. Negative MU remains visible and is clipped only in payout scores.
+For repeated-round decisions, marginal utility uses a local allocation-derived estimate based on unique coverage, served demand, delivered quality, redundancy, and cost. This keeps 50–100 round batches tractable. The final displayed seed recomputes exact marginal utility by removing each provider and reallocating all demand with the same outages and user order. Cached geometry reduces distance work. Negative MU remains visible and is clipped only in payout scores.
 
 ## Mathematical definitions
 
@@ -77,9 +78,9 @@ Let J be genuine users, P provider identities, B base provider count, dⱼ deman
 | Demand served D | Σaⱼ / Σdⱼ |
 | Quality Q | Σaⱼqⱼ / Σdⱼ; unmet demand contributes zero |
 | Redundancy R | count(kⱼ ≥ 2) / J, independent of remaining capacity |
-| Infrastructure cost I | Σcᵢ / (10 × B); fixed denominator during removal |
+| Infrastructure cost I | Σcᵢ over participating identities / (10 × B); fixed denominator during removal |
 | Utility | U = w₁C + w₂D + w₃Q − w₄R − w₅I; not restricted to [0,1] |
-| Marginal utility | MUᵢ = U(N) − U(N without i), with full reallocation |
+| Marginal utility | Final displayed seed: MUᵢ = U(N) − U(N without i), with full reallocation; round histories use the disclosed local estimate |
 | Actual contribution | Demand units delivered by identity i |
 | Mean provider reward | ΣRᵢ / P, including offline and Sybil identities |
 | Total rewards | ΣRᵢ after audit withholding |
@@ -91,7 +92,9 @@ Let J be genuine users, P provider identities, B base provider count, dⱼ deman
 | Fraud prevented F | ΣGᵢfᵢ over correctly detected fraudulent identities |
 | Verification efficiency | F / V |
 | Attack ROI | (L − total attack cost) / total attack cost |
-| Participation | Share of actors whose aggregate rewards cover operating + attack costs; Sybils aggregate to their actor |
+| Participation | Share of base providers choosing to participate in a round |
+| Honest participation | Participating honest base providers / honest base providers |
+| Malicious participation | Participating malicious base providers / malicious base providers |
 | Reward concentration | Identity HHI = Σ(Rᵢ / ΣR)² |
 | Useful reward efficiency | Σ[Rᵢ(1−fᵢ) × indicator(MUᵢ>0)] / ΣR |
 | Provider redundancy | Redundantly covered assigned users / assigned users |
@@ -121,13 +124,13 @@ Random auditing samples without replacement. Risk auditing sorts `riskᵢ × G�
 - Strategic placement searches eight seeded candidate positions sequentially per malicious actor. The utility objective evaluates U; the reward objective maximizes actual served demand, a contribution-rule reward proxy. It is not a global optimizer or a best response to every mechanism. Truthful strategic placement is not classified as inflated-claim fraud.
 - Collusion inflates claims and suppresses detection probability. Mutual-attestation messages are abstracted into suppression, not explicitly modeled as a validator graph.
 
-Physical utility is identical across reward rules in a shared trial because rewards do not cause entry/exit or relocation within that round. Participation is a static profitability proxy. Do not interpret a comparison as long-run welfare or an equilibrium result.
+Provider decisions use expected payoff. Honest payoff is expected reward minus operating cost. A malicious provider attacks only when expected fraud income after audit and stake-loss risk exceeds honest payoff and remains positive. Participation compares the best expected payoff with costs and includes a 2.5% exploration probability. Effort adapts gradually, affecting capacity, quality, and uptime. Every third round, participating providers compare the current location with three seeded candidates. Contribution favors demand volume and overlap; quality adjustment adds quality; marginal-utility rules favor underserved demand; the proposed rule also includes reputation and risk. Movement and effort changes incur infrastructure cost.
 
 ## Example experiment
 
-Open Experiment Lab and use 100 providers, 1,000 users, 20% malicious actors, false contribution, inflation 3, risk-based verification at 10%, 10 trials, seed 42, medium density and clustered demand. Other parameters follow `defaults` in `lib/simulation/types.ts`. Inspect Research Results and the paired proposed-minus-contribution leakage interval.
+Open Experiment Lab and use 100 providers, 1,000 users, 20% malicious actors, false contribution, inflation 3, risk-based verification at 10%, 50 rounds, 10 trials, seed 42, medium density and clustered demand. Other parameters follow `defaults` in `lib/simulation/types.ts`. Inspect Results, choose any round-level trajectory, and review the paired proposed-minus-contribution leakage interval.
 
-For reproduction, use Copy Configuration or CSV export. Each CSV row contains model version, trial seed, mechanism, removed provider, all metrics, and full configuration. Run exactly the completed number of trials when reproducing a cancelled batch. Results are in-memory until exported; reload resets the session.
+For reproduction, use CSV export. Each CSV row contains model version, trial seed, mechanism, round number, all nine tracked round metrics, and the full configuration. Run exactly the completed number of trials when reproducing a cancelled batch. Results are in-memory until exported; reload resets the session.
 
 ## Statistical interpretation
 
@@ -139,5 +142,5 @@ Keep physical evidence off-chain. Add a settlement adapter consuming a versioned
 
 `provider stake → signed infrastructure claim → evidence verification → reward / penalty → reputation update`
 
-An adapter could emit settlement instructions with chain ID, round ID, provider/actor ID, claim hash, evidence commitment, audit decision, reward and penalty. Test conservation and replay protection before connecting a contract. Store evidence outside the chain with access controls and publish commitments or attestations. Introduce stake reservation, slashing, appeals, reputation evolution, actor budgets, noisy MU estimates and multi-round entry/exit as separate modules before drawing deployment conclusions. No decorative blockchain database or fabricated consensus is included.
+An adapter could emit settlement instructions with chain ID, round ID, provider/actor ID, claim hash, evidence commitment, audit decision, reward and penalty. Test conservation and replay protection before connecting a contract. Store evidence outside the chain with access controls and publish commitments or attestations. Introduce stake reservation, appeals, actor budgets, calibrated fraud signals, and empirically estimated behavioral responses before drawing deployment conclusions. No decorative blockchain database or fabricated consensus is included.
 

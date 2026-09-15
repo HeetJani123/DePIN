@@ -13,7 +13,9 @@ export const metricDefinitions:Record<string,{label:string;definition:string;uni
  prevented:{label:'Fraudulent rewards prevented',definition:'Σ gross reward × fraudulent claim fraction for correctly detected fraud.',unit:'cr'},
  verificationEfficiency:{label:'Verification efficiency',definition:'Fraudulent rewards prevented / verification cost. N/A if no cost.',unit:'×'},
  attackROI:{label:'Attack ROI',definition:'(Fraudulent reward obtained − attack cost) / attack cost. N/A at zero attack cost. Recoverable stake excluded.',unit:'%'},
- participation:{label:'Provider participation',definition:'Actors with rewards ≥ operating + attack costs / actors. Aggregates Sybils; a one-round profitability proxy, not equilibrium.',unit:'%'},
+ participation:{label:'Provider participation',definition:'Base providers choosing to participate / all base providers, averaged across behavioral rounds.',unit:'%'},
+ honestParticipation:{label:'Honest provider participation',definition:'Honest base providers choosing to participate / all honest base providers.',unit:'%'},
+ maliciousParticipation:{label:'Malicious provider participation',definition:'Malicious base providers choosing to participate / all malicious base providers.',unit:'%'},
  concentration:{label:'Reward concentration',definition:'HHI = Σ(reward / total paid)² across identities. N/A if no payout.'},
  usefulEfficiency:{label:'Useful reward efficiency',definition:'Rewards attributable to truthful service at positive-MU identities / total paid. N/A if no payout.',unit:'%'},
  verified:{label:'Providers verified',definition:'Audit count ≤ floor(identity count × budget / 100). Risk allocation can leave budget unused.'}
