@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useRef,useState} from "react";
+import {useEffect,useMemo,useRef,useState} from "react";
 import {BarChart3,Check,Download,FlaskConical,LoaderCircle,Play,RadioTower,X} from "lucide-react";
 import {Progress} from "@/components/ui/progress";
 import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from "@/components/ui/table";
@@ -31,7 +31,7 @@ export default function Home(){
   const [notice,setNotice]=useState("");
   const workers=useRef<Worker[]>([]);
   const result=trial.results.find(r=>r.mechanism===mechanism)!;
-  const sample=trials.length?trials:[trial];
+  const sample=useMemo(()=>trials.length?trials:[trial],[trials,trial]);
   const dirty=JSON.stringify({...config,trials:1})!==JSON.stringify({...sample[0].config,trials:1});
   const patch=<K extends keyof Config>(key:K,value:Config[K])=>setConfig(c=>({...c,[key]:value}));
 
@@ -41,7 +41,7 @@ export default function Home(){
   function run(count=config.trials){
     workers.current.forEach(w=>w.terminate());setBusy(true);setProgress(0);setProvider(null);
     const workerCount=count>=25?Math.min(4,Math.max(1,navigator.hardwareConcurrency??4),count):1,base=Math.floor(count/workerCount),remainder=count%workerCount,workerProgress=Array(workerCount).fill(0);
-    let gathered:Trial[]=[],finished=0,offset=0,failed=false;
+    const gathered:Trial[]=[];let finished=0,offset=0,failed=false;
     const stopAll=()=>{workers.current.forEach(w=>w.terminate());workers.current=[]};
     workers.current=Array.from({length:workerCount},(_,index)=>{
       const size=base+(index<remainder?1:0),start=offset;offset+=size;
